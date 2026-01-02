@@ -56,15 +56,37 @@ def parse_dxf_metadata(file_buffer):
     except Exception as e:
         return {"error": f"Failed to parse DXF: {str(e)}", "type": "DXF"}
 
+import zipfile
+
 def parse_ifc_metadata(file_buffer):
     """
-    Extract metadata from IFC file buffer.
+    Extract metadata from IFC file buffer (supports .ifc and .ifczip).
     """
-    # ifcopenshell needs a file path usually.
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".ifc") as tmp:
-            tmp.write(file_buffer.getvalue())
-            tmp_path = tmp.name
+        tmp_path = None
+        
+        # Determine if it's a zip file or check extension from buffer manually if needed.
+        # Here we trust the caller usually, but let's be robust.
+        is_zip = False
+        try:
+           with zipfile.ZipFile(file_buffer) as zf:
+               is_zip = True
+               # Find first .ifc file in zip
+               ifc_files = [f for f in zf.namelist() if f.lower().endswith('.ifc')]
+               if not ifc_files:
+                   return {"error": "No .ifc file found in zip archive", "type": "IFC"}
+               
+               with tempfile.NamedTemporaryFile(delete=False, suffix=".ifc") as tmp:
+                   tmp.write(zf.read(ifc_files[0]))
+                   tmp_path = tmp.name
+        except zipfile.BadZipFile:
+            # Not a zip, assume standard IFC
+            pass
+            
+        if not is_zip:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".ifc") as tmp:
+                tmp.write(file_buffer.getvalue())
+                tmp_path = tmp.name
         
         f = ifcopenshell.open(tmp_path)
         

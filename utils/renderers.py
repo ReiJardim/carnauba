@@ -54,14 +54,37 @@ def render_dxf(file_buffer):
     except Exception as e:
         st.error(f"Erro ao renderizar DXF: {e}")
 
+import zipfile
+
 def render_ifc(file_buffer):
     """
-    Render IFC file (Structure Tree & Placeholder 3D).
+    Render IFC file (Structure Tree & Placeholder 3D). Supports .ifc and .ifczip.
     """
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".ifc") as tmp:
-            tmp.write(file_buffer.getvalue())
-            tmp_path = tmp.name
+        tmp_path = None
+        is_zip = False
+        
+        try:
+             # Reset buffer position just in case
+             file_buffer.seek(0)
+             with zipfile.ZipFile(file_buffer) as zf:
+                is_zip = True
+                ifc_files = [f for f in zf.namelist() if f.lower().endswith('.ifc')]
+                if not ifc_files:
+                    st.error("No .ifc file found inside the zip archive.")
+                    return
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".ifc") as tmp:
+                    tmp.write(zf.read(ifc_files[0]))
+                    tmp_path = tmp.name
+        except zipfile.BadZipFile:
+            pass
+
+        if not is_zip:
+            file_buffer.seek(0)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".ifc") as tmp:
+                tmp.write(file_buffer.getvalue())
+                tmp_path = tmp.name
             
         f = ifcopenshell.open(tmp_path)
         

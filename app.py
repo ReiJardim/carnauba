@@ -68,7 +68,7 @@ with st.sidebar:
     
     # Módulo de Upload
     uploaded = st.file_uploader("Carregar arquivos de projeto", 
-                                type=["pdf", "dxf", "ifc"], 
+                                type=["pdf", "dxf", "ifc", "ifczip"], 
                                 accept_multiple_files=True)
     
     st.markdown("---")
@@ -107,7 +107,7 @@ if current_file.name not in st.session_state['file_metadata']:
             st.session_state['file_metadata'][current_file.name] = parse_pdf_metadata(current_file)
         elif file_ext == "dxf":
             st.session_state['file_metadata'][current_file.name] = parse_dxf_metadata(current_file)
-        elif file_ext == "ifc":
+        elif file_ext in ["ifc", "ifczip"]:
             st.session_state['file_metadata'][current_file.name] = parse_ifc_metadata(current_file)
         else:
             st.session_state['file_metadata'][current_file.name] = {"type": "Desconhecido"}
@@ -138,7 +138,7 @@ with col_viewer:
         render_pdf(current_file)
     elif file_ext == "dxf":
         render_dxf(current_file)
-    elif file_ext == "ifc":
+    elif file_ext in ["ifc", "ifczip"]:
         render_ifc(current_file)
     else:
         st.warning("Formato não suportado para visualização.")
@@ -198,7 +198,7 @@ if not st.session_state['fullscreen'] and col_info:
                     for layer in metadata.get('layers', []):
                         st.text(layer) # text is more compact than code
                         
-                elif file_ext == "ifc":
+                elif file_ext in ["ifc", "ifczip"]:
                     st.write(f"**Projeto:** {metadata.get('project_name', '-')}")
                     st.write(f"**Schema:** {metadata.get('schema', '-')}")
                     st.write("**Contagem de Elementos:**")
