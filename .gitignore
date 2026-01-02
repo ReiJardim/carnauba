@@ -78,3 +78,5 @@ assets/
 PRD_carnauba.md
 temp/
 *.log
+utils/__pycache__
+__pycache__
