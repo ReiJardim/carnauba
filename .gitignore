@@ -1,6 +1,80 @@
+# Bytes
+__pycache__/
+*.py[cod]
+*$py.class
 
+# Ctypes
+*.so
 
-# Arquivos de Planejamento 
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-PRD_carnauba.md
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environments
+.env
 .venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Streamlit
+.streamlit/
+!/.streamlit/config.toml  # Keep config if intended to be shared, ignore secrets.toml usually
+secrets.toml
+
+# OS specific
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Project specific
+assets/
+!assets/logo.png
+# Allow logo but ignore other heavy assets if any, 
+# although usually assets are part of repo. 
+# PRD said "assets/logo.png" exists. 
+# Let's keep assets folder unless they are huge user uploads.
+# The user uploads go to RAM (st.session_state) but if we save them:
+# We are processing in memory.
+
+# User specific NOT in repo
+PRD_carnauba.md
+temp/
+*.log
