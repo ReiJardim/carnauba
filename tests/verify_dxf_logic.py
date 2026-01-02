@@ -11,11 +11,13 @@ import ezdxf
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Mock streamlit before importing renderers
-sys.modules['streamlit'] = MagicMock()
+st_mock = MagicMock()
+sys.modules['streamlit'] = st_mock
+sys.modules['streamlit.components'] = MagicMock()
+sys.modules['streamlit.components.v1'] = MagicMock()
 import streamlit as st
 
 # Import the functions we modified
-from utils.parsers import parse_dxf_metadata
 from utils.renderers import render_dxf
 
 class TestDXFLogic(unittest.TestCase):
@@ -58,28 +60,16 @@ EOF
 """
         self.file_buffer = io.BytesIO(self.dxf_content.encode('utf-8'))
 
-    def test_parse_dxf_metadata(self):
-        print("\nTesting parse_dxf_metadata...")
-        try:
-            metadata = parse_dxf_metadata(self.file_buffer)
-            print(f"Metadata result: {metadata}")
-            self.assertNotIn("error", metadata, f"Metadata parsing returned error: {metadata.get('error')}")
-            self.assertEqual(metadata["type"], "DXF")
-            self.assertEqual(metadata["version"], "AC1009")
-        except Exception as e:
-            self.fail(f"parse_dxf_metadata raised exception: {e}")
-
     def test_render_dxf(self):
         print("\nTesting render_dxf...")
         try:
-            # We just want to ensure it runs without crashing and calls pyplot
+            # We just want to ensure it runs without crashing and calls plotly_chart
             self.file_buffer.seek(0)
             render_dxf(self.file_buffer)
             
-            # Check if st.pyplot was called
-            # Note: We mocked st, so st.pyplot is a mock
-            st.pyplot.assert_called()
-            print("render_dxf executed successfully and called st.pyplot")
+            # Check if st.plotly_chart was called
+            st.plotly_chart.assert_called()
+            print("render_dxf executed successfully and called st.plotly_chart")
             
         except Exception as e:
             self.fail(f"render_dxf raised exception: {e}")

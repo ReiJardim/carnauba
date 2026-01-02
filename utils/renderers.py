@@ -22,7 +22,7 @@ def render_pdf(file_buffer):
 
 def render_dxf(file_buffer):
     """
-    Render DXF file using ezdxf and matplotlib.
+    Render DXF file using ezdxf and Plotly for interactive visualization (Zoom/Pan).
     """
     tmp_path = None
     try:
@@ -34,20 +34,93 @@ def render_dxf(file_buffer):
         # Read using readfile which handles binary/encoding automatically
         doc = ezdxf.readfile(tmp_path)
         msp = doc.modelspace()
+        
+        # Plotly Figure
+        fig = go.Figure()
+        
+        # Helper to extract geometry
+        # We use ezdxf.path to unify geometry extraction (Lines, Arcs, Splines, Polylines)
+        from ezdxf import path
+        
+        entity_count = 0
+        
+        # Optimize: Collect all lines to plot in fewer traces if possible, 
+        # but for individual entity interactivity (hover), separate traces are better.
+        # For performance with large DXFs, we might need to bundle. 
+        # For now, let's try a balanced approach: One trace per layer or similar?
+        # Let's keep it simple: Iterate entities and plot. 
+        # To avoid blowing up browser with thousands of traces, we can group by layer or color.
+        
+        # Group coordinates by layer to reduce number of traces (Performance optimization)
+        layer_coords = {}
+        
+        for entity in msp:
+            try:
+                # Filter useful entities
+                if entity.dxftype() not in ['LINE', 'LWPOLYLINE', 'POLYLINE', 'CIRCLE', 'ARC', 'SPLINE', 'ELLIPSE']:
+                    continue
+                
+                p = path.make_path(entity)
+                # Flatten curves to line segments (0.1 approximation error)
+                vertices = list(p.flattening(distance=0.1))
+                
+                if len(vertices) < 2:
+                    continue
+                    
+                layer_name = entity.dxf.layer
+                if layer_name not in layer_coords:
+                    layer_coords[layer_name] = {'x': [], 'y': []}
+                
+                # Add NaN to separate disconnected lines in a single Scatter trace
+                xs = [v.x for v in vertices] + [None]
+                ys = [v.y for v in vertices] + [None]
+                
+                layer_coords[layer_name]['x'].extend(xs)
+                layer_coords[layer_name]['y'].extend(ys)
+                
+                entity_count += 1
+            except Exception:
+                continue
 
-        # Matplotlib setup
-        fig = plt.figure(facecolor='#0e1117') # Dark background
-        ax = fig.add_axes([0, 0, 1, 1])
-        ax.set_axis_off()
+        if entity_count == 0:
+            st.warning("Nenhuma geometria suportada encontrada neste DXF.")
+            return
+
+        # Create traces per layer
+        for layer_name, coords in layer_coords.items():
+            fig.add_trace(go.Scatter(
+                x=coords['x'], 
+                y=coords['y'],
+                mode='lines',
+                name=layer_name,
+                line=dict(width=1), 
+                connectgaps=False # Important for NaN usage
+            ))
+
+        # Layout settings for CAD-like feel
+        fig.update_layout(
+            plot_bgcolor='#0e1117',
+            paper_bgcolor='#0e1117',
+            font=dict(color='#fafafa'),
+            showlegend=True,
+            dragmode='pan', # Default to pan for CAD
+            height=700,
+            margin=dict(l=0, r=0, t=30, b=0)
+        )
         
-        # Render
-        ctx = RenderContext(doc)
-        ctx.set_current_layout(msp)
-        
-        out = MatplotlibBackend(ax)
-        Frontend(ctx, out).draw_layout(msp, finalize=True)
-        
-        st.pyplot(fig, use_container_width=True)
+        # Ensure aspect ratio is 1:1 (crucial for CAD)
+        fig.update_yaxes(
+            scaleanchor="x", 
+            scaleratio=1, 
+            visible=False, 
+            showgrid=False
+        )
+        fig.update_xaxes(
+            visible=False, 
+            showgrid=False
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
         
     except Exception as e:
         st.error(f"Erro ao renderizar DXF: {e}")
