@@ -38,23 +38,35 @@ def parse_dxf_metadata(file_buffer):
     """
     Extract metadata from DXF file buffer.
     """
+    tmp_path = None
     try:
-        # ezdxf reads from stream (text mode usually tailored for files, but let's try reading bytes)
-        # ezdxf.read() expects a filename or a stream.
-        # file_buffer is bytes. ezdxf expects text stream usually for DXF.
-        # let's decode to string.
-        content = file_buffer.getvalue().decode('utf-8', errors='ignore')
-        doc = ezdxf.read(io.StringIO(content))
+        # Save to temp file to let ezdxf handle encoding/binary detection
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
+            tmp.write(file_buffer.getvalue())
+            tmp_path = tmp.name
+
+        doc = ezdxf.readfile(tmp_path)
         
         layers = [layer.dxf.name for layer in doc.layers]
-        return {
+        
+        metadata = {
             "type": "DXF",
             "version": doc.dxfversion,
             "layers_count": len(layers),
             "layers": layers[:10]  # Show first 10
         }
+        
     except Exception as e:
-        return {"error": f"Failed to parse DXF: {str(e)}", "type": "DXF"}
+        metadata = {"error": f"Failed to parse DXF: {str(e)}", "type": "DXF"}
+        
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+                
+    return metadata
 
 import zipfile
 

@@ -15,10 +15,7 @@ st.divider()
 # --- CSS Customizado para Dark Mode e Estilo Premium ---
 st.markdown("""
 <style>
-    .stApp {
-        background-color: #0e1117;
-        color: #fafafa;
-    }
+    
     .css-1d391kg {
         padding-top: 1rem;
     }

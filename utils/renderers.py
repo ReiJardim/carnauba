@@ -24,10 +24,15 @@ def render_dxf(file_buffer):
     """
     Render DXF file using ezdxf and matplotlib.
     """
+    tmp_path = None
     try:
-        # Decode and read DXF
-        content = file_buffer.getvalue().decode('utf-8', errors='ignore')
-        doc = ezdxf.read(io.StringIO(content))
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
+            tmp.write(file_buffer.getvalue())
+            tmp_path = tmp.name
+
+        # Read using readfile which handles binary/encoding automatically
+        doc = ezdxf.readfile(tmp_path)
         msp = doc.modelspace()
 
         # Matplotlib setup
@@ -37,22 +42,22 @@ def render_dxf(file_buffer):
         
         # Render
         ctx = RenderContext(doc)
-        # Use dark theme logic for colors if needed, but for now simple swap
         ctx.set_current_layout(msp)
         
         out = MatplotlibBackend(ax)
         Frontend(ctx, out).draw_layout(msp, finalize=True)
         
-        # Style tweaks
-        # Make lines visible on dark background? default ezdxf colors might be black on white logic.
-        # We might need to override. 
-        # For this MVP, let's keep it simple. If it's black on black, we might not see it.
-        # Generally CAD drawings use colors that are visible on dark.
-        
         st.pyplot(fig, use_container_width=True)
         
     except Exception as e:
         st.error(f"Erro ao renderizar DXF: {e}")
+        
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
 
 import zipfile
 import multiprocessing
