@@ -1,23 +1,55 @@
-import streamlit as st
-from streamlit_pdf_viewer import pdf_viewer
+import base64
+import io
+import logging
+import os
+import tempfile
+import zipfile
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+
 import ezdxf
+from ezdxf import path as ezdxf_path
 from ezdxf.addons.drawing import RenderContext, Frontend
 from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
-import matplotlib.pyplot as plt
-import io
-import tempfile
+
 import ifcopenshell
-import os
+import ifcopenshell.geom
+
+import streamlit as st
+from streamlit_pdf_viewer import pdf_viewer
+
+from utils.config import (
+    DXF_SUPPORTED_ENTITIES,
+    DXF_FLATTENING_DISTANCE,
+    IFC_TARGET_TYPES,
+    IFC_ELEMENT_COLORS,
+    IFC_TRANSPARENT_TYPES,
+    IFC_TRANSPARENT_OPACITY,
+    IFC_SOLID_OPACITY,
+    UI_BACKGROUND_COLOR,
+    UI_PAPER_COLOR,
+    UI_FONT_COLOR,
+    VIEWER_HEIGHT_2D,
+    VIEWER_HEIGHT_3D,
+    PDF_VIEWER_HEIGHT,
+)
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 def render_pdf(file_buffer):
     """
     Render PDF file using iframe for native browser interaction (zoom, scroll).
-    """
-    import base64
     
+    Args:
+        file_buffer: BytesIO buffer containing the PDF file.
+    """
     binary_data = file_buffer.getvalue()
     base64_pdf = base64.b64encode(binary_data).decode('utf-8')
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800px" type="application/pdf"></iframe>'
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="{PDF_VIEWER_HEIGHT}px" type="application/pdf"></iframe>'
     st.markdown(pdf_display, unsafe_allow_html=True)
 
 def render_dxf(file_buffer):
@@ -38,10 +70,6 @@ def render_dxf(file_buffer):
         # Plotly Figure
         fig = go.Figure()
         
-        # Helper to extract geometry
-        # We use ezdxf.path to unify geometry extraction (Lines, Arcs, Splines, Polylines)
-        from ezdxf import path
-        
         entity_count = 0
         
         # Optimize: Collect all lines to plot in fewer traces if possible, 
@@ -56,13 +84,13 @@ def render_dxf(file_buffer):
         
         for entity in msp:
             try:
-                # Filter useful entities
-                if entity.dxftype() not in ['LINE', 'LWPOLYLINE', 'POLYLINE', 'CIRCLE', 'ARC', 'SPLINE', 'ELLIPSE']:
+        # Filter useful entities
+                if entity.dxftype() not in DXF_SUPPORTED_ENTITIES:
                     continue
                 
-                p = path.make_path(entity)
-                # Flatten curves to line segments (0.1 approximation error)
-                vertices = list(p.flattening(distance=0.1))
+                p = ezdxf_path.make_path(entity)
+                # Flatten curves to line segments
+                vertices = list(p.flattening(distance=DXF_FLATTENING_DISTANCE))
                 
                 if len(vertices) < 2:
                     continue
@@ -99,12 +127,12 @@ def render_dxf(file_buffer):
 
         # Layout settings for CAD-like feel
         fig.update_layout(
-            plot_bgcolor='#0e1117',
-            paper_bgcolor='#0e1117',
-            font=dict(color='#fafafa'),
+            plot_bgcolor=UI_BACKGROUND_COLOR,
+            paper_bgcolor=UI_PAPER_COLOR,
+            font=dict(color=UI_FONT_COLOR),
             showlegend=True,
-            dragmode='pan', # Default to pan for CAD
-            height=700,
+            dragmode='pan',  # Default to pan for CAD
+            height=VIEWER_HEIGHT_2D,
             margin=dict(l=0, r=0, t=30, b=0)
         )
         
@@ -132,12 +160,7 @@ def render_dxf(file_buffer):
             except:
                 pass
 
-import zipfile
-import multiprocessing
-import plotly.graph_objects as go
-import numpy as np
-import ifcopenshell.geom
-import pandas as pd
+
 
 def render_ifc(file_buffer):
     """
@@ -173,14 +196,6 @@ def render_ifc(file_buffer):
         
         # Tabs for Tree View vs 3D View
         tab_3d, tab_data = st.tabs(["Visualização 3D", "Dados & Quantitativos"])
-        
-        # Elements to render (Expanded list for better coverage)
-        target_types = [
-            "IfcWall", "IfcSlab", "IfcWindow", "IfcDoor", "IfcColumn", "IfcBeam",
-            "IfcRoof", "IfcStair", "IfcRailing", "IfcCurtainWall", "IfcRamp",
-            "IfcMember", "IfcPlate", "IfcCovering", "IfcFurnishingElement",
-            "IfcFlowTerminal", "IfcFlowSegment", "IfcBuildingElementProxy"
-        ]
 
         with tab_3d:
             st.info("Renderizando geometria 3D... Isso pode levar alguns segundos dependendo da complexidade.")
@@ -191,29 +206,11 @@ def render_ifc(file_buffer):
                 
                 # Create a Plotly Figure
                 fig = go.Figure()
-                
-                # Simple material colors
-                colors = {
-                    "IfcWall": "lightgrey",
-                    "IfcSlab": "grey",
-                    "IfcWindow": "lightblue",
-                    "IfcDoor": "brown",
-                    "IfcColumn": "darkgrey",
-                    "IfcBeam": "orange",
-                    "IfcRoof": "darkred",
-                    "IfcStair": "lightbrown",
-                    "IfcRailing": "gold",
-                    "IfcCurtainWall": "aliceblue",
-                    "IfcFurnishingElement": "purple",
-                    "IfcFlowTerminal": "cyan",
-                    "IfcFlowSegment": "blue",
-                    "IfcCovering": "whitesmoke"
-                }
 
                 has_geometry = False
                 
                 # Iterate and process
-                for ifc_type in target_types:
+                for ifc_type in IFC_TARGET_TYPES:
                     elements = ifcopenshell_file.by_type(ifc_type)
                     if not elements:
                         continue
@@ -236,8 +233,8 @@ def render_ifc(file_buffer):
                                 mesh = go.Mesh3d(
                                     x=x, y=y, z=z,
                                     i=i, j=j, k=k,
-                                    color=colors.get(ifc_type, "white"),
-                                    opacity=0.4 if ifc_type in ["IfcWindow", "IfcCurtainWall"] else 1.0,
+                                    color=IFC_ELEMENT_COLORS.get(ifc_type, "white"),
+                                    opacity=IFC_TRANSPARENT_OPACITY if ifc_type in IFC_TRANSPARENT_TYPES else IFC_SOLID_OPACITY,
                                     name=f"{ifc_type} - {element.GlobalId}",
                                     showscale=False,
                                     hoverinfo='text',
@@ -256,11 +253,11 @@ def render_ifc(file_buffer):
                             yaxis=dict(visible=False),
                             zaxis=dict(visible=False),
                             dragmode='orbit',
-                            bgcolor='#0e1117'
+                            bgcolor=UI_BACKGROUND_COLOR
                         ),
                         margin=dict(l=0, r=0, t=0, b=0),
-                        height=600,
-                        paper_bgcolor='#0e1117',
+                        height=VIEWER_HEIGHT_3D,
+                        paper_bgcolor=UI_PAPER_COLOR,
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
@@ -275,7 +272,7 @@ def render_ifc(file_buffer):
             
             # Calculate quantities
             quantities = []
-            for ifc_type in target_types:
+            for ifc_type in IFC_TARGET_TYPES:
                 elements = ifcopenshell_file.by_type(ifc_type)
                 count = len(elements)
                 if count > 0:

@@ -1,28 +1,38 @@
 import io
 import tempfile
 import os
+import zipfile
+import logging
+
 import ezdxf
 import ifcopenshell
-from pypdf import PdfReader # streamlit-pdf-viewer uses pypdf internally often, but let's standardise if possible or just use what works.
-# Actually I'll use standard pypdf if available or just simple logic.
-# Wait, pypdf is not in requirements explicitly but streamlit-pdf-viewer likely depends on it or similar?
-# Let's check requirements.txt again. I only put `streamlit-pdf-viewer`.
-# I should probably add `pypdf` to requirements.txt to be safe for metadata extraction.
-# OR I can just use `streamlit-pdf-viewer`'s rendering, but for metadata (page count), pypdf is good.
-# I'll rely on pypdf being there or add it. Let's add it to imports and requirements if I fail.
-# Actually, let's just use `pypdf` for page count.
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# PDF reader with fallback
 try:
     from pypdf import PdfReader
+    PYPDF_AVAILABLE = True
 except ImportError:
-    # Fallback or error if not installed.
-    # I will assume I need to install it.
-    pass
+    logger.warning("pypdf not installed. PDF metadata extraction will be limited.")
+    PYPDF_AVAILABLE = False
+    PdfReader = None
+
 
 def parse_pdf_metadata(file_buffer):
     """
     Extract metadata from PDF file buffer.
+    
+    Args:
+        file_buffer: BytesIO buffer containing the PDF file.
+        
+    Returns:
+        dict: Metadata dictionary with type, pages, and info keys.
     """
+    if not PYPDF_AVAILABLE:
+        return {"error": "pypdf not installed", "type": "PDF"}
+    
     try:
         reader = PdfReader(file_buffer)
         num_pages = len(reader.pages)
@@ -32,6 +42,7 @@ def parse_pdf_metadata(file_buffer):
             "info": reader.metadata
         }
     except Exception as e:
+        logger.error(f"Failed to parse PDF: {e}")
         return {"error": f"Failed to parse PDF: {str(e)}", "type": "PDF"}
 
 def parse_dxf_metadata(file_buffer):
@@ -57,18 +68,19 @@ def parse_dxf_metadata(file_buffer):
         }
         
     except Exception as e:
+        logger.error(f"Failed to parse DXF: {e}")
         metadata = {"error": f"Failed to parse DXF: {str(e)}", "type": "DXF"}
         
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
-            except:
-                pass
+            except OSError as cleanup_err:
+                logger.warning(f"Failed to cleanup temp file {tmp_path}: {cleanup_err}")
                 
     return metadata
 
-import zipfile
+
 
 def parse_ifc_metadata(file_buffer):
     """
@@ -128,4 +140,5 @@ def parse_ifc_metadata(file_buffer):
             }
         }
     except Exception as e:
+        logger.error(f"Failed to parse IFC: {e}")
         return {"error": f"Failed to parse IFC: {str(e)}", "type": "IFC"}
