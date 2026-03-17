@@ -115,45 +115,207 @@ def plot_vista_superior(p, n_pisos, L, largura):
 
 
 def plot_vista_3d(p, e, h, n_espelhos, largura, L, H):
-    traces = []
-    for i in range(n_espelhos):
-        traces.append(go.Mesh3d(
-            x=[i*p, i*p, i*p, i*p], y=[0, largura, largura, 0],
-            z=[i*e, i*e, (i+1)*e, (i+1)*e],
-            i=[0, 0], j=[1, 2], k=[2, 3], color='lightblue', flatshading=True
-        ))
-        if i < n_espelhos - 1:
-            traces.append(go.Mesh3d(
-                x=[i*p, (i+1)*p, (i+1)*p, i*p], y=[0, largura, largura, 0],
-                z=[(i+1)*e, (i+1)*e, (i+1)*e, (i+1)*e],
-                i=[0, 0], j=[1, 2], k=[2, 3], color='gray', flatshading=True
-            ))
-    alpha = math.atan(e/p)
-    h_vert = h / math.cos(alpha)
+    """
+    Modelo 3D interativo com geometria estruturalmente correta:
+    - Laje inclinada contínua (paralelepípedo inclinado)
+    - Cada degrau = prisma triangular sentado sobre a laje (sem interseção)
+    """
+    LUZ     = dict(ambient=0.45, diffuse=0.85, specular=0.25, roughness=0.55, fresnel=0.1)
+    LUZ_POS = dict(x=200, y=-300, z=500)
+    traces  = []
+    n       = n_espelhos
+
+    # ── Índices para paralelepípedo (8 vértices) ───────────────────────────────
+    # Vértices 0-3: face "inferior"  |  4-7: face "superior" (mesmo x,y)
+    BOX_I = [0, 0,  4, 4,  0, 0,  2, 2,  0, 0,  1, 1]
+    BOX_J = [1, 2,  6, 7,  4, 5,  6, 7,  3, 7,  5, 6]
+    BOX_K = [2, 3,  5, 6,  5, 1,  7, 3,  7, 4,  6, 2]
+
+    # ── Índices para prisma triangular (6 vértices) ────────────────────────────
+    # v0=(x0,0,z0)  v1=(x0,0,z1)  v2=(x1,0,z1)   ← face frontal y=0
+    # v3=(x0,L,z0)  v4=(x0,L,z1)  v5=(x1,L,z1)   ← face traseira y=larg
+    # Faces: frontal(0,1,2) | traseira(3,5,4) | espelho(0,3,4,1) |
+    #        piso(1,4,5,2)  | base inclinada(0,2,5,3)
+    PRI_I = [0, 3,  0, 0,  1, 1,  0, 0]
+    PRI_J = [1, 5,  3, 4,  4, 5,  2, 5]
+    PRI_K = [2, 4,  4, 1,  5, 2,  5, 3]
+
+    # ── Laje inclinada ─────────────────────────────────────────────────────────
+    alpha  = math.atan2(e, p)
+    h_vert = h / math.cos(alpha)          # espessura projetada verticalmente
+    span_x = n * p
+    span_z = n * e
+    # face superior (toca os degraus): z vai de 0 a span_z linearmente com x
+    # face inferior: deslocada h_vert para baixo
+    xs_l = [0, span_x, span_x, 0,         0, span_x, span_x, 0      ]
+    ys_l = [0, 0,      largura, largura,   0, 0,      largura, largura]
+    zs_l = [0, span_z, span_z, 0,         -h_vert, span_z-h_vert, span_z-h_vert, -h_vert]
     traces.append(go.Mesh3d(
-        x=[0, L, L, 0], y=[0, largura, largura, 0],
-        z=[-h_vert, H - e - h_vert, H - e - h_vert, -h_vert],
-        i=[0, 0], j=[1, 2], k=[2, 3], color='darkgray', flatshading=True
+        x=xs_l, y=ys_l, z=zs_l,
+        i=BOX_I, j=BOX_J, k=BOX_K,
+        color='#3d4f5c', flatshading=False,
+        lighting=LUZ, lightposition=LUZ_POS,
+        showscale=False, hoverinfo='skip', name='Laje'
     ))
-    x_wire = [0, 0]
-    z_wire = [0, e]
-    for i in range(n_espelhos - 1):
-        x_wire.extend([(i+1)*p, (i+1)*p])
-        z_wire.extend([z_wire[-1], z_wire[-1]+e])
-    z_intrados_direita = (n_espelhos - 1) * e - h_vert
-    x_wire.extend([L, 0, 0])
-    z_wire.extend([z_intrados_direita, -h_vert, 0])
-    traces.append(go.Scatter3d(x=x_wire, y=[0]*len(x_wire), z=z_wire,
-                               mode='lines', line=dict(color='black', width=4)))
-    traces.append(go.Scatter3d(x=x_wire, y=[largura]*len(x_wire), z=z_wire,
-                               mode='lines', line=dict(color='black', width=4)))
+
+    # ── Degraus (prismas triangulares) ─────────────────────────────────────────
+    cores = ['#7a8d9c', '#5e7080']
+    for step in range(n):
+        x0 = step * p;       x1 = (step + 1) * p
+        z0 = step * e;       z1 = (step + 1) * e
+        # 6 vértices do prisma: v0-v2 lado y=0, v3-v5 lado y=largura
+        xs_p = [x0, x0, x1,   x0, x0, x1   ]
+        ys_p = [0,  0,  0,    largura, largura, largura]
+        zs_p = [z0, z1, z1,   z0, z1, z1   ]
+        traces.append(go.Mesh3d(
+            x=xs_p, y=ys_p, z=zs_p,
+            i=PRI_I, j=PRI_J, k=PRI_K,
+            color=cores[step % 2], flatshading=False,
+            lighting=LUZ, lightposition=LUZ_POS,
+            showscale=False, hoverinfo='skip', name=f'Degrau {step+1}'
+        ))
+
     fig = go.Figure(data=traces)
     fig.update_layout(
-        title="Visualização 3D da Escada",
-        scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z', aspectmode='data'),
-        margin=dict(l=0, r=0, t=40, b=0), height=500, showlegend=False
+        paper_bgcolor='#0e1117',
+        scene=dict(
+            bgcolor='#0e1117',
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+            aspectmode='data',
+            camera=dict(
+                eye=dict(x=-1.4, y=-2.2, z=1.1),
+                up=dict(x=0, y=0, z=1)
+            )
+        ),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=520, showlegend=False
     )
     return fig
+
+
+def create_plotter_escada_3d(p_cm, e_cm, h_cm, n_espelhos, largura_cm, angulo="Frontal oblíquo"):
+    """
+    Gera um plotter PyVista com modelo 3D realista da escada.
+    p_cm: largura do piso (cm)
+    e_cm: altura do espelho (cm)
+    h_cm: espessura da laje (cm)
+    n_espelhos: número de espelhos (degraus)
+    largura_cm: largura transversal da escada (cm)
+    angulo: "Frontal oblíquo" | "Lateral" | "Superior"
+    """
+    import pyvista as pv
+    import numpy as np
+
+    pl = pv.Plotter(window_size=[900, 520], off_screen=True)
+    pl.background_color = "#0e1117"
+
+    # Converte cm → m para visualização mais natural
+    p = p_cm / 100.0
+    e = e_cm / 100.0
+    h = h_cm / 100.0
+    larg = largura_cm / 100.0
+    n = n_espelhos
+
+    # Cor do concreto — cinza médio
+    cor_degrau  = "#8a9ba8"
+    cor_laje    = "#5c6a75"
+    cor_piso    = "#4a5560"
+
+    # ── Laje inclinada (intrados) ──────────────────────────────────────────────
+    # Vértices da placa inclinada (espessura h na direção perpendicular à rampa)
+    alpha = math.atan2(e, p)
+    cos_a = math.cos(alpha)
+    sin_a = math.sin(alpha)
+    dx = h * sin_a   # componente X do vetor normal à rampa
+    dz = h * cos_a   # componente Z do vetor normal à rampa (para baixo)
+
+    x0, z0 = 0.0, 0.0
+    x1, z1 = n * p, n * e
+    # face superior da laje (intrados → tangencia o perfil escalonado)
+    pts_top = np.array([
+        [x0,    0.0,  z0],
+        [x1,    0.0,  z1],
+        [x1,   larg,  z1],
+        [x0,   larg,  z0],
+    ])
+    # face inferior (afastada h na normal à rampa)
+    pts_bot = pts_top + np.array([dx, 0, -dz])
+
+    laje_faces = np.array([
+        [4, 0, 1, 2, 3],  # topo
+        [4, 4, 5, 6, 7],  # fundo
+        [4, 0, 1, 5, 4],  # front
+        [4, 3, 2, 6, 7],  # back
+        [4, 0, 3, 7, 4],  # left
+        [4, 1, 2, 6, 5],  # right
+    ])
+    laje_pts = np.vstack([pts_top, pts_bot])
+    laje_mesh = pv.PolyData(laje_pts, laje_faces)
+    pl.add_mesh(laje_mesh, color=cor_laje, smooth_shading=True,
+                specular=0.3, specular_power=15, show_edges=False)
+
+    # ── Degraus (cubóides sobre a laje) ───────────────────────────────────────
+    for i in range(n):
+        xL = i * p
+        xR = xL + p
+        zB = i * e        # base do degrau = topo da laje no ponto
+        zT = zB + e       # topo do degrau
+
+        verts = np.array([
+            [xL, 0.0,  zB], [xR, 0.0,  zB], [xR, larg,  zB], [xL, larg,  zB],  # base
+            [xL, 0.0,  zT], [xR, 0.0,  zT], [xR, larg,  zT], [xL, larg,  zT],  # topo
+        ])
+        faces = np.array([
+            [4, 0, 1, 2, 3],   # bottom
+            [4, 4, 5, 6, 7],   # top
+            [4, 0, 1, 5, 4],   # front
+            [4, 3, 2, 6, 7],   # back
+            [4, 0, 3, 7, 4],   # left
+            [4, 1, 2, 6, 5],   # right
+        ])
+        step_mesh = pv.PolyData(verts, faces)
+        # Alterna tonalidade para profundidade visual
+        shade = cor_degrau if i % 2 == 0 else cor_piso
+        pl.add_mesh(step_mesh, color=shade, smooth_shading=True,
+                    specular=0.5, specular_power=20, show_edges=True,
+                    edge_color="#222831", line_width=0.5)
+
+    # ── Iluminação ────────────────────────────────────────────────────────────
+    pl.remove_all_lights()
+    pl.add_light(pv.Light(
+        position=(n * p * 2, -larg * 2, n * e * 3),
+        focal_point=(n * p / 2, larg / 2, n * e / 2),
+        intensity=1.2, light_type="scene light"
+    ))
+    pl.add_light(pv.Light(
+        position=(-p, larg * 2, n * e * 2),
+        focal_point=(n * p / 2, larg / 2, n * e / 2),
+        intensity=0.5, light_type="scene light"
+    ))
+
+    # ── Câmera por ângulo ─────────────────────────────────────────────────────
+    cx = n * p / 2
+    cy = larg / 2
+    cz = n * e / 2
+    dist = max(n * p, n * e, larg) * 2.0
+
+    if angulo == "Lateral":
+        pl.camera.position = (cx, cy - dist * 1.8, cz + dist * 0.3)
+        pl.camera.focal_point = (cx, cy, cz)
+        pl.camera.up = (0, 0, 1)
+    elif angulo == "Superior":
+        pl.camera.position = (cx, cy, cz + dist * 2.2)
+        pl.camera.focal_point = (cx, cy, cz)
+        pl.camera.up = (1, 0, 0)
+    else:  # Frontal oblíquo (padrão)
+        pl.camera.position = (cx - n * p * 0.8, cy - larg * 2.5, cz + n * e * 1.2)
+        pl.camera.focal_point = (cx, cy, cz)
+        pl.camera.up = (0, 0, 1)
+
+    pl.camera.zoom(0.9)
+    return pl
 
 
 def plot_carregamentos(L, pd):
@@ -199,58 +361,268 @@ def plot_esforcos(L, pd, modelo):
     return fig
 
 
-def plot_detalhamento(h, cobrimento, As_calc, As_dist, modelo, phi_mm):
+def plot_detalhamento(h, cobrimento, modelo, phi_mm, phi_dist_mm, n_p, s_p, n_d, s_d):
     fig = go.Figure()
+
+    is_balanco = "Balanço" in modelo
+
+    # Seção de concreto
     fig.add_trace(go.Scatter(
         x=[0, 100, 100, 0, 0], y=[0, 0, h, h, 0],
-        fill='toself', fillcolor='rgba(200,200,200,0.5)',
+        fill='toself', fillcolor='rgba(200,200,200,0.4)',
         mode='lines', line=dict(color='black', width=2), name='Concreto'
     ))
-    is_balanco = "Balanço" in modelo
-    rebar_y = h - cobrimento - (phi_mm/20) if is_balanco else cobrimento + (phi_mm/20)
-    num_bars = int(max(As_calc / ((math.pi * (phi_mm/10)**2)/4), 3))
-    x_bars = np.linspace(cobrimento+2, 100 - cobrimento - 2, num=num_bars)
-    y_bars = [rebar_y] * num_bars
-    fig.add_trace(go.Scatter(x=x_bars, y=y_bars, mode='markers',
-                             marker=dict(color='red', size=8),
-                             name=f'Armad. Principal ({num_bars} barras)'))
-    dist_y = rebar_y - 1 if is_balanco else rebar_y + 1
-    fig.add_trace(go.Scatter(x=[cobrimento, 100-cobrimento], y=[dist_y, dist_y],
-                             mode='lines', line=dict(color='blue', width=3),
-                             name='Armad. Distribuição'))
+
+    # Linhas de cobrimento (tracejadas laranja)
+    for yc in [cobrimento, h - cobrimento]:
+        fig.add_shape(type="line", x0=0, x1=100, y0=yc, y1=yc,
+                      line=dict(color='orange', width=1, dash='dot'))
+
+    # Posições das camadas:
+    # - principal: junto à face mais tracionada
+    # - distribuição: camada imediatamente acima (ou abaixo) da principal
+    r_p = cobrimento + phi_mm / 20              # centro da barra principal (face inferior)
+    r_d = r_p + phi_mm / 10 + phi_dist_mm / 20  # centro da distribuição, acima
+    if is_balanco:
+        r_p = h - cobrimento - phi_mm / 20
+        r_d = r_p - phi_mm / 10 - phi_dist_mm / 20
+
+    # Barras principais (pontos vermelhos com tamanho proporcional à bitola)
+    x_p = np.linspace(s_p / 2, 100 - s_p / 2, num=min(n_p, 30))
+    fig.add_trace(go.Scatter(
+        x=x_p, y=[r_p] * len(x_p), mode='markers',
+        marker=dict(color='red', size=max(6, phi_mm * 0.5), symbol='circle'),
+        name=f'Principal: φ{phi_mm:.1f} c/{s_p:.1f}cm'
+    ))
+
+    # Barras de distribuição (pontos azuis)
+    x_d = np.linspace(s_d / 2, 100 - s_d / 2, num=min(n_d, 30))
+    fig.add_trace(go.Scatter(
+        x=x_d, y=[r_d] * len(x_d), mode='markers',
+        marker=dict(color='blue', size=max(5, phi_dist_mm * 0.5), symbol='circle'),
+        name=f'Distribuição: φ{phi_dist_mm:.1f} c/{s_d:.1f}cm'
+    ))
+
+    # Cotas laterais (direita): h total
+    fig.add_annotation(x=106, y=h / 2, text=f"h = {h:.0f} cm",
+                       showarrow=False, font=dict(size=10), xanchor='left')
+    # Cota d (altura útil)
+    d_plot = r_p if not is_balanco else (h - r_p)
+    fig.add_annotation(x=-5, y=r_p / 2, text=f"d = {d_plot:.1f} cm",
+                       showarrow=False, font=dict(size=9, color='gray'), xanchor='right')
+    # Cota cobrimento
+    fig.add_annotation(x=-5, y=cobrimento / 2, text=f"c = {cobrimento:.1f} cm",
+                       showarrow=False, font=dict(size=9, color='orange'), xanchor='right')
+
     fig.update_layout(
-        title="Seção Transversal da Laje (1 metro de largura)",
+        title=f"Seção Transversal (b = 100 cm) — {modelo.split('(')[0].strip()}",
         xaxis_title="Largura (cm)", yaxis_title="Altura (cm)",
-        yaxis=dict(scaleanchor="x", scaleratio=1),
+        yaxis=dict(scaleanchor="x", scaleratio=1, range=[-2, h + 3]),
+        xaxis=dict(range=[-20, 120]),
+        margin=dict(l=60, r=80, t=40, b=20), height=360, showlegend=True
+    )
+    return fig
+
+
+def plot_detalhe_longitudinal(L_cm, h_cm, cobrimento, phi_mm, phi_dist_mm, lb_p_cm, s_p, s_d, modelo):
+    """
+    Vista longitudinal esquemática da laje de escada mostrando:
+    - Corpo da laje com apoios
+    - Armadura principal com zonas de ancoragem
+    - Armadura de distribuição (indicadores perpendiculares)
+    - Cotas: L, lb, h, cobrimento
+    """
+    fig = go.Figure()
+    is_balanco = "Balanço" in modelo
+
+    r_p = cobrimento + phi_mm / 20
+    r_d = r_p + phi_mm / 10 + phi_dist_mm / 20
+    if is_balanco:
+        r_p = h_cm - cobrimento - phi_mm / 20
+        r_d = r_p - phi_mm / 10 - phi_dist_mm / 20
+
+    pad = lb_p_cm + 20
+
+    # Apoios (blocos hachurados)
+    for xs, xe, label in [(-pad, 0, "Apoio inf.\n(piso/laje)"), (L_cm, L_cm + pad, "Apoio sup.\n(patamar)")]:
+        fig.add_shape(type='rect', x0=xs, x1=xe, y0=-4, y1=h_cm,
+                      fillcolor='rgba(100,100,100,0.18)', line=dict(color='black', width=1))
+        fig.add_annotation(x=(xs + xe) / 2, y=-10, text=label,
+                           showarrow=False, font=dict(size=8, color='gray'), xanchor='center')
+
+    # Corpo da laje
+    fig.add_trace(go.Scatter(
+        x=[0, L_cm, L_cm, 0, 0], y=[0, 0, h_cm, h_cm, 0],
+        fill='toself', fillcolor='rgba(200,200,200,0.4)',
+        mode='lines', line=dict(color='black', width=2), name='Laje (vista longitudinal)'
+    ))
+
+    # Linha de cobrimento
+    fig.add_shape(type='line', x0=0, x1=L_cm, y0=cobrimento, y1=cobrimento,
+                  line=dict(color='orange', width=1, dash='dot'))
+
+    # Armadura principal — vão
+    fig.add_trace(go.Scatter(
+        x=[0, L_cm], y=[r_p, r_p],
+        mode='lines', line=dict(color='red', width=4),
+        name=f'Principal φ{phi_mm:.1f} c/{s_p:.1f}cm'
+    ))
+    # Ancoragem esquerda
+    fig.add_trace(go.Scatter(
+        x=[-lb_p_cm, 0], y=[r_p, r_p],
+        mode='lines', line=dict(color='red', width=4, dash='dash'),
+        name=f'Ancoragem ≥ {lb_p_cm:.0f}cm (cada apoio)'
+    ))
+    # Ancoragem direita
+    fig.add_trace(go.Scatter(
+        x=[L_cm, L_cm + lb_p_cm], y=[r_p, r_p],
+        mode='lines', line=dict(color='red', width=4, dash='dash'), showlegend=False
+    ))
+
+    # Armadura de distribuição — cruzes ao longo do vão (perpendicular ao plano)
+    n_d_show = min(14, max(4, int(L_cm / s_d)))
+    xd_pts = np.linspace(s_d / 2, L_cm - s_d / 2, num=n_d_show)
+    sz = 1.8
+    for xd in xd_pts:
+        fig.add_trace(go.Scatter(x=[xd - sz, xd + sz], y=[r_d, r_d],
+                                 mode='lines', line=dict(color='steelblue', width=2), showlegend=False))
+        fig.add_trace(go.Scatter(x=[xd, xd], y=[r_d - sz, r_d + sz],
+                                 mode='lines', line=dict(color='steelblue', width=2), showlegend=False))
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
+                             line=dict(color='steelblue', width=2),
+                             name=f'Distribuição φ{phi_dist_mm:.1f} c/{s_d:.1f}cm (⊗ perp. ao vão)'))
+
+    # Cotas
+    fig.add_annotation(x=L_cm / 2, y=-14, text=f"L = {L_cm:.0f} cm (projeção horizontal)",
+                       showarrow=False, font=dict(size=11, color='navy'))
+    fig.add_annotation(x=-lb_p_cm / 2, y=r_p + 4, text=f"lb≥{lb_p_cm:.0f}cm",
+                       showarrow=False, font=dict(size=9, color='darkred'))
+    fig.add_annotation(x=L_cm + lb_p_cm / 2, y=r_p + 4, text=f"lb≥{lb_p_cm:.0f}cm",
+                       showarrow=False, font=dict(size=9, color='darkred'))
+    fig.add_annotation(x=L_cm + pad + 3, y=h_cm / 2, text=f"h={h_cm:.0f}cm",
+                       showarrow=False, textangle=-90, font=dict(size=9), xanchor='left')
+    fig.add_annotation(x=-3, y=cobrimento / 2, text=f"c={cobrimento:.0f}cm",
+                       showarrow=False, font=dict(size=8, color='darkorange'), xanchor='right')
+
+    fig.update_layout(
+        title="Vista Longitudinal Esquemática — Armaduras no Vão",
+        xaxis_title="Comprimento (cm)", yaxis_title="Altura (cm)",
+        yaxis=dict(scaleanchor="x", scaleratio=1, range=[-18, h_cm + 12]),
+        xaxis=dict(range=[-pad - 8, L_cm + pad + 12]),
         margin=dict(l=20, r=20, t=40, b=20), height=300
     )
     return fig
 
 
 def plot_empuxo_vazio():
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=[0, 50, 100, 100, 40, 0], y=[50, 0, 0, -20, -20, 30],
-        fill='toself', fillcolor='rgba(200,200,200,0.3)',
-        mode='lines', line=dict(color='gray', width=2), name='Geometria da Escada'
-    ))
-    fig.add_trace(go.Scatter(
-        x=[5, 45, 95], y=[45, -5, -5],
-        mode='lines', line=dict(color='red', dash='dash', width=3),
-        name='ERRADO (Gera Empuxo ao Vazio)'
-    ))
-    fig.add_trace(go.Scatter(
-        x=[5, 60], y=[45, -15],
-        mode='lines', line=dict(color='green', width=3), name='CORRETO (Armaduras se cruzam)'
-    ))
-    fig.add_trace(go.Scatter(
-        x=[35, 95], y=[10, -5],
-        mode='lines', line=dict(color='green', width=3), showlegend=False
-    ))
+    """
+    Detalhe do nó de transição laje horizontal / laje de escada inclinada.
+    Painel esquerdo: caso ERRADO (empuxo ao vazio).
+    Painel direito:  caso CORRETO (barras se cruzam).
+    """
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=["❌ ERRADO — Empuxo ao Vazio", "✅ CORRETO — Barras se Cruzam"],
+        horizontal_spacing=0.06
+    )
+
+    h  = 12    # espessura esquemática (cm)
+    lb = 22    # ancoragem esquemática
+    incl = 0.52  # slope dy/dx da escada
+
+    cos_a = 1.0 / math.sqrt(1 + incl ** 2)
+    lb_x  = lb * cos_a  # projeção horizontal de lb ao longo da escada
+
+    for col, correct in [(1, False), (2, True)]:
+        # ── Laje de piso (horizontal) ────────────────────────────────────────
+        fig.add_trace(go.Scatter(
+            x=[-lb - 10, 8, 8, -lb - 10, -lb - 10],
+            y=[0, 0, h, h, 0],
+            fill='toself', fillcolor='rgba(170,170,170,0.4)',
+            mode='lines', line=dict(color='black', width=2), showlegend=False
+        ), row=1, col=col)
+
+        # ── Laje de escada (inclinada) ────────────────────────────────────────
+        dx = 48
+        dy = incl * dx
+        fig.add_trace(go.Scatter(
+            x=[0, dx, dx, 0, 0],
+            y=[h, h + dy, h + dy + h, h + h, h],
+            fill='toself', fillcolor='rgba(150,150,150,0.4)',
+            mode='lines', line=dict(color='black', width=2), showlegend=False
+        ), row=1, col=col)
+
+        c     = 2.0
+        y_lj  = c + 0.6                   # barra na laje de piso (face tracionada, embaixo)
+        y_esc_node = h + c + 0.6          # barra da escada no nó (face tracionada, embaixo)
+
+        if correct:
+            # Barra da LAJE → cruza para dentro da escada (lb horizontal)
+            fig.add_trace(go.Scatter(
+                x=[-lb - 10, lb], y=[y_lj, y_lj],
+                mode='lines', line=dict(color='green', width=3), showlegend=False
+            ), row=1, col=col)
+
+            # Barra da ESCADA → cruza para dentro da laje (lb ao longo da inclinação)
+            x0_esc = -lb_x
+            y0_esc = y_esc_node - lb_x * incl
+            fig.add_trace(go.Scatter(
+                x=[x0_esc, dx], y=[y0_esc, h + dy + c + 0.6],
+                mode='lines', line=dict(color='green', width=3, dash='dash'), showlegend=False
+            ), row=1, col=col)
+
+            # Círculo no nó
+            fig.add_shape(type='circle', x0=-4, y0=h - 4, x1=4, y1=h + 4,
+                          fillcolor='rgba(0,180,0,0.15)',
+                          line=dict(color='green', width=2), row=1, col=col)
+
+            # Anotações lb
+            fig.add_annotation(x=lb / 2, y=y_lj - 4.5, text=f"lb≥{lb:.0f}cm\n(laje→escada)",
+                               showarrow=False, font=dict(size=8, color='darkgreen'),
+                               xanchor='center', row=1, col=col)
+            fig.add_annotation(x=-lb_x / 2 - 1, y=y0_esc - 2, text=f"lb\n(escada→laje)",
+                               showarrow=False, font=dict(size=8, color='darkgreen'),
+                               xanchor='right', row=1, col=col)
+            fig.add_annotation(x=4, y=h + 9, text="Barras cruzam o nó ✅\nTração transferida",
+                               showarrow=False, font=dict(size=8, color='darkgreen'),
+                               xanchor='left', bgcolor='rgba(200,255,200,0.6)', row=1, col=col)
+        else:
+            # Barra da LAJE → para na face do nó
+            fig.add_trace(go.Scatter(
+                x=[-lb - 10, -1], y=[y_lj, y_lj],
+                mode='lines', line=dict(color='red', width=3), showlegend=False
+            ), row=1, col=col)
+
+            # Barra da ESCADA → começa na face do nó
+            fig.add_trace(go.Scatter(
+                x=[1, dx], y=[y_esc_node + 1 * incl, h + dy + c + 0.6],
+                mode='lines', line=dict(color='red', width=3), showlegend=False
+            ), row=1, col=col)
+
+            # Indicador de fissura no vértice
+            fig.add_trace(go.Scatter(
+                x=[0, 4, -3, 1], y=[h, h + 6, h + 5, h],
+                mode='lines', line=dict(color='darkred', width=2, dash='dot'), showlegend=False
+            ), row=1, col=col)
+            fig.add_annotation(x=4, y=h + 9,
+                               text="Barras NÃO cruzam ❌\nEmpuxo ao vazio\n→ FISSURA no vértice",
+                               showarrow=False, font=dict(size=8, color='darkred'),
+                               xanchor='left', bgcolor='rgba(255,200,200,0.6)', row=1, col=col)
+
+        # Rótulos dos elementos
+        fig.add_annotation(x=-lb / 2 - 5, y=-3, text="Laje de piso",
+                           showarrow=False, font=dict(size=8, color='gray'),
+                           xanchor='center', row=1, col=col)
+        fig.add_annotation(x=dx * 0.7, y=h + dy * 0.5, text="Laje de escada",
+                           showarrow=False, font=dict(size=8, color='gray'),
+                           xanchor='left', textangle=-27, row=1, col=col)
+
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
     fig.update_layout(
-        title="Regra de Detalhamento em Transições de Lances",
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-        margin=dict(l=20, r=20, t=40, b=20), height=300
+        title="Detalhe de Amarração no Nó Laje/Escada — NBR 6118:2014",
+        height=400, showlegend=False,
+        margin=dict(l=10, r=10, t=80, b=10)
     )
     return fig
 
@@ -618,11 +990,12 @@ def show():
     with tab_armaduras:
         st.subheader("Dimensionamento ao ELU")
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         fck        = col1.number_input("fck [MPa]:", min_value=20, max_value=50, value=25, step=5)
         cobrimento = col2.number_input("Cobrimento [cm]:", min_value=1.5, max_value=5.0,
                                        value=2.0, step=0.5)
-        bitola_est = col3.selectbox("Bitola Principal ($\\phi$) [mm]:", [8.0, 10.0, 12.5, 16.0], index=1)
+        bitola_est  = col3.selectbox("Bitola Principal (φ) [mm]:", [8.0, 10.0, 12.5, 16.0], index=1)
+        bitola_dist = col4.selectbox("Bitola Distribuição (φ_d) [mm]:", [6.3, 8.0, 10.0, 12.5], index=0)
 
         d_util = st.session_state.h_laje - cobrimento - (bitola_est / 20.0)
         Md_cm  = st.session_state.Md_knm * 100
@@ -645,6 +1018,108 @@ def show():
             col_res1.metric("Área de Aço Principal ($A_s$)", f"{As_final:.2f} cm²/m")
             col_res2.metric("Área de Aço Distribuição",       f"{As_dist:.2f} cm²/m")
 
+            # ── SELEÇÃO COMERCIAL E ESPAÇAMENTOS ─────────────────────────────
+            st.markdown("---")
+            st.markdown("#### 🔩 Seleção Comercial de Barras e Verificação de Espaçamentos *(NBR 6118:2014 — §17.3.5.2)*")
+
+            A_phi_p = math.pi * (bitola_est  / 10) ** 2 / 4   # cm² por barra
+            A_phi_d = math.pi * (bitola_dist / 10) ** 2 / 4
+
+            n_p = math.ceil(As_final / A_phi_p)
+            s_p = round(100.0 / n_p, 1)
+            As_adot_p = n_p * A_phi_p
+
+            n_d = math.ceil(As_dist / A_phi_d)
+            s_d = round(100.0 / n_d, 1)
+            As_adot_d = n_d * A_phi_d
+
+            # Limites NBR 6118:2014 §17.3.5.2
+            h_ref = st.session_state.h_laje
+            s_max_p = min(2.0 * h_ref, 20.0)   # principal: ≤ min(2h, 20cm)
+            s_max_d = min(3.0 * h_ref, 30.0)   # distribuição: ≤ min(3h, 30cm)
+
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                st.markdown("**Armadura Principal**")
+                ok_p = s_p <= s_max_p
+                st.dataframe([
+                    {"Item": "Bitola φ",             "Valor": f"{bitola_est:.1f} mm"},
+                    {"Item": "Área / barra (Aφ)",    "Valor": f"{A_phi_p:.4f} cm²"},
+                    {"Item": "Nº barras / metro",    "Valor": str(n_p)},
+                    {"Item": "Espaçamento adotado s","Valor": f"{s_p:.1f} cm"},
+                    {"Item": "As adotado",           "Valor": f"{As_adot_p:.3f} cm²/m"},
+                    {"Item": "s_máx (NBR §17.3.5.2)","Valor": f"{s_max_p:.0f} cm"},
+                    {"Item": "s ≤ s_máx",            "Valor": f"{'✅' if ok_p else '❌'} {s_p:.1f} ≤ {s_max_p:.0f} cm"},
+                ], use_container_width=True, hide_index=True)
+                if not ok_p:
+                    st.error(f"s = {s_p:.1f} cm > {s_max_p:.0f} cm — reduza o espaçamento")
+
+            with col_sel2:
+                st.markdown("**Armadura de Distribuição**")
+                ok_d = s_d <= s_max_d
+                st.dataframe([
+                    {"Item": "Bitola φ_dist",        "Valor": f"{bitola_dist:.1f} mm"},
+                    {"Item": "Área / barra (Aφ)",    "Valor": f"{A_phi_d:.4f} cm²"},
+                    {"Item": "Nº barras / metro",    "Valor": str(n_d)},
+                    {"Item": "Espaçamento adotado s","Valor": f"{s_d:.1f} cm"},
+                    {"Item": "As adotado",           "Valor": f"{As_adot_d:.3f} cm²/m"},
+                    {"Item": "s_máx (NBR §17.3.5.2)","Valor": f"{s_max_d:.0f} cm"},
+                    {"Item": "s ≤ s_máx",            "Valor": f"{'✅' if ok_d else '❌'} {s_d:.1f} ≤ {s_max_d:.0f} cm"},
+                ], use_container_width=True, hide_index=True)
+                if not ok_d:
+                    st.error(f"s = {s_d:.1f} cm > {s_max_d:.0f} cm — reduza o espaçamento")
+
+            # ── COMPRIMENTO DE ANCORAGEM ──────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### ⚓ Comprimento de Ancoragem nos Apoios *(NBR 6118:2014 — §9.3 e §9.4.2.5)*")
+
+            _fctm_a = 0.3 * (fck ** (2 / 3))          # MPa
+            _fctd_a = 0.7 * _fctm_a / 1.4              # MPa
+            fbd_mpa  = 2.25 * _fctd_a                  # MPa — η1=η2=1 (boa aderência, φ≤32mm)
+            fyd_mpa  = 500.0 / 1.15                    # MPa
+
+            # lb_básico = φ·fyd / (4·fbd)
+            lb_p      = (bitola_est  / 10) * fyd_mpa / (4 * fbd_mpa)   # cm
+            lb_d      = (bitola_dist / 10) * fyd_mpa / (4 * fbd_mpa)   # cm
+            lb_nec_p  = lb_p * (As_calc / As_adot_p)                    # cm — redução proporc.
+            lb_min_p  = max(10 * bitola_est  / 10, 10.0, lb_nec_p)      # cm
+            lb_min_d  = max(10 * bitola_dist / 10, 10.0, lb_d)          # cm
+
+            col_anc1, col_anc2 = st.columns(2)
+            with col_anc1:
+                st.markdown("**Armadura Principal**")
+                st.latex(r"f_{bd} = 2{,}25 \cdot \eta_1 \cdot \eta_2 \cdot f_{ctd} \quad (\eta_1 = \eta_2 = 1)")
+                st.latex(
+                    f"f_{{bd}} = 2{{,}}25 \\times {_fctd_a:.4f}"
+                    f" = {fbd_mpa:.4f} \\; \\mathrm{{MPa}}"
+                )
+                st.latex(r"l_b = \frac{\phi \cdot f_{yd}}{4 \cdot f_{bd}}")
+                st.latex(
+                    f"l_b = \\frac{{{bitola_est/10:.2f} \\times {fyd_mpa:.1f}}}"
+                    f"{{4 \\times {fbd_mpa:.4f}}} = {lb_p:.1f} \\; \\mathrm{{cm}}"
+                )
+                st.latex(
+                    f"l_{{b,nec}} = {lb_p:.1f} \\times \\frac{{{As_calc:.3f}}}{{{As_adot_p:.3f}}}"
+                    f" = {lb_nec_p:.1f} \\; \\mathrm{{cm}}"
+                )
+                st.info(
+                    f"**Ancorar ≥ {lb_min_p:.0f} cm** nos apoios  \n"
+                    f"= max(10φ = {10*bitola_est/10:.0f} cm,  10 cm,  lb,nec = {lb_nec_p:.1f} cm)"
+                )
+
+            with col_anc2:
+                st.markdown("**Armadura de Distribuição**")
+                st.latex(
+                    f"l_b = \\frac{{{bitola_dist/10:.2f} \\times {fyd_mpa:.1f}}}"
+                    f"{{4 \\times {fbd_mpa:.4f}}} = {lb_d:.1f} \\; \\mathrm{{cm}}"
+                )
+                st.info(
+                    f"**Ancorar ≥ {lb_min_d:.0f} cm** nos apoios  \n"
+                    f"= max(10φ = {10*bitola_dist/10:.0f} cm,  10 cm,  lb = {lb_d:.1f} cm)"
+                )
+
+            # ── VERIFICAÇÃO AO CISALHAMENTO ───────────────────────────────────
+            st.markdown("---")
             st.markdown("#### Verificação ao Esforço Cortante (Sem Estribos)")
             vr1, status_cisalhamento = verificar_cisalhamento(
                 st.session_state.Vd_kn, 100.0, d_util, fck, As_final)
@@ -657,12 +1132,96 @@ def show():
                     f"**Falha ao Cisalhamento:** $V_{{sd}}$ ({st.session_state.Vd_kn:.2f} kN) "
                     f"$> V_{{R1}}$ ({vr1:.2f} kN). Necessário estribos ou aumento da espessura!")
 
+            # ── SEÇÃO TRANSVERSAL ─────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### 📐 Seção Transversal — Posicionamento das Armaduras")
             st.plotly_chart(
-                plot_detalhamento(st.session_state.h_laje, cobrimento, As_final, As_dist,
-                                  st.session_state.modelo, bitola_est),
+                plot_detalhamento(st.session_state.h_laje, cobrimento,
+                                  st.session_state.modelo, bitola_est, bitola_dist,
+                                  n_p, s_p, n_d, s_d),
                 use_container_width=True)
 
-            st.markdown("### ⚠️ Cuidado com Empuxo ao Vazio!")
+            # ── VISTA LONGITUDINAL ────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### 📏 Vista Longitudinal — Armaduras no Vão e Ancoragens")
+            st.plotly_chart(
+                plot_detalhe_longitudinal(
+                    st.session_state.L_real, st.session_state.h_laje, cobrimento,
+                    bitola_est, bitola_dist, lb_min_p, s_p, s_d, st.session_state.modelo),
+                use_container_width=True)
+
+            # ── REGRAS DE AMARRAÇÃO E EXECUÇÃO ───────────────────────────────
+            st.markdown("---")
+            with st.expander("📐 Regras de Amarração, Posicionamento e Execução", expanded=True):
+                col_am1, col_am2 = st.columns(2)
+
+                with col_am1:
+                    st.markdown("##### Amarração das Barras")
+                    st.markdown("""
+**Regra geral (NBR 6118:2014 §9.4.6 e práticas de detalhamento):**
+- Amarrar **em todos os cruzamentos** de armadura principal × distribuição com **arame recozido nº 18 (Ø 1,2 mm)** — torniquete simples
+- Em lajes com φ ≤ 10 mm e ρ ≤ ρ_min: pode-se amarrar **em xadrez** (cruzamentos alternados), desde que as barras da borda sejam todas amarradas
+- **Nunca deixar cruzamentos soltos** — risco de deslocamento durante concretagem
+
+**Sequência de montagem:**
+1. Espaçadores de cobrimento (espaçados ≤ 100 cm entre si)
+2. Armadura **principal embaixo** (para laje bi-apoiada/transversal)
+3. Armadura de **distribuição em cima** da principal
+4. Amarrar todos os cruzamentos
+5. Para **balanço**: principal fica **em cima**, distribuição abaixo
+                    """)
+
+                    st.markdown("##### Espaçamento Mínimo entre Barras")
+                    st.markdown("""
+*(NBR 6118:2014 §18.3.2.2)*
+
+$$a_{min} = \\max(\\phi_{max};\\ d_{brita}+0{,}5\\,\\text{cm};\\ 2\\,\\text{cm})$$
+
+- Para lajes com barras ≤ φ12,5: geralmente `a_min = 2 cm`
+- O espaçamento adotado já satisfaz este limite se `s ≥ φ + 2 cm`
+                    """)
+
+                with col_am2:
+                    st.markdown("##### Ancoragem nos Apoios — Detalhes Críticos")
+                    st.markdown(f"""
+**Apoio inferior (ligação escada → laje de piso):**
+- A barra principal da escada deve penetrar **≥ {lb_min_p:.0f} cm** na laje de piso (reta ou com gancho)
+- A barra principal da laje de piso deve penetrar **≥ {lb_min_p:.0f} cm** dentro da laje de escada
+- As barras de ambos os elementos **devem se cruzar** no nó — nunca terminar alinhadas na face
+
+**Apoio superior (ligação escada → patamar ou laje superior):**
+- Idem ao apoio inferior — barras da escada cruzam para dentro do patamar
+- Comprimento de ancoragem mínimo: **{lb_min_p:.0f} cm** a partir da face do apoio
+
+**Gancho alternativo (quando não há espaço para ancoragem reta):**
+- Dobra de **90°** com prolongamento reto ≥ max(4φ; 6 cm) após a dobra *(NBR §9.4.6.2)*
+- Dobra de **180°** com prolongamento reto ≥ max(4φ; 6 cm) após a dobra
+
+**Comprimentos calculados para esta escada:**
+| Armadura | φ (mm) | lb calculado | lb,nec | **Adotar** |
+|---|---|---|---|---|
+| Principal | {bitola_est:.1f} | {lb_p:.0f} cm | {lb_nec_p:.0f} cm | **{lb_min_p:.0f} cm** |
+| Distribuição | {bitola_dist:.1f} | {lb_d:.0f} cm | {lb_d:.0f} cm | **{lb_min_d:.0f} cm** |
+                    """)
+
+                    st.markdown("##### Espaçadores de Cobrimento")
+                    st.markdown(f"""
+- Usar espaçadores plásticos ou de argamassa para garantir cobrimento nominal = **{cobrimento:.0f} cm**
+- Espaçar a cada **≤ 100 cm** em ambas as direções
+- Instalar na face inferior E nas laterais da laje
+- Nunca usar madeira, pedras ou entulho como espaçador
+                    """)
+
+            # ── DETALHE DO NÓ — EMPUXO AO VAZIO ─────────────────────────────
+            st.markdown("---")
+            st.markdown("### ⚠️ Detalhe Crítico: Amarração no Nó Laje/Escada")
+            st.error(
+                "**Empuxo ao Vazio** — Nos nós de transição entre a laje de escada e a laje horizontal "
+                "(piso ou patamar), as barras dos dois elementos **devem obrigatoriamente se cruzar**. "
+                "Se as barras terminarem alinhadas na face do nó, a força de tração no vértice não tem "
+                "como ser transferida e **gera fissura diagonal no vértice** — falha de detalhamento, "
+                "não de dimensionamento."
+            )
             st.plotly_chart(plot_empuxo_vazio(), use_container_width=True)
             st.success("Dimensionamento à flexão concluído com sucesso!")
 
@@ -896,7 +1455,7 @@ def show():
 
         st.markdown("#### Modelo Tridimensional interativo")
         st.plotly_chart(plot_vista_3d(c_p, c_e, c_h, c_n, c_larg, c_L, c_H),
-                        use_container_width=True)
+                        use_container_width=True, key="plot_3d_geral")
 
         st.markdown("---")
         st.markdown("### Resumo de Engenharia")
