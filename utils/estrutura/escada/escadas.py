@@ -175,6 +175,30 @@ def plot_vista_3d(p, e, h, n_espelhos, largura, L, H):
             showscale=False, hoverinfo='skip', name=f'Degrau {step+1}'
         ))
 
+    # ── Piso de saída (laje inferior horizontal) ───────────────────────────────
+    # Extensão à esquerda da escada — piso do pavimento inferior
+    pad = 2 * p   # comprimento do trecho de piso mostrado
+
+    def slab_horizontal(x0, x1, z_top, espessura, cor, nome):
+        """Paralelepípedo horizontal com espessura dada."""
+        z_bot = z_top - espessura
+        xs = [x0, x1, x1, x0,   x0, x1, x1, x0]
+        ys = [0,  0,  largura, largura,   0, 0, largura, largura]
+        zs = [z_top]*4 + [z_bot]*4
+        return go.Mesh3d(
+            x=xs, y=ys, z=zs,
+            i=BOX_I, j=BOX_J, k=BOX_K,
+            color=cor, flatshading=False,
+            lighting=LUZ, lightposition=LUZ_POS,
+            showscale=False, hoverinfo='skip', name=nome
+        )
+
+    # Piso inferior: nível z=0, mesma espessura vertical da laje inclinada
+    traces.append(slab_horizontal(-pad, 0, 0.0, h_vert, '#2e3d4a', 'Piso inferior'))
+
+    # Laje superior: nível z=span_z, mesma espessura vertical da laje inclinada
+    traces.append(slab_horizontal(span_x, span_x + pad, span_z, h_vert, '#2e3d4a', 'Laje superior'))
+
     fig = go.Figure(data=traces)
     fig.update_layout(
         paper_bgcolor='#0e1117',
