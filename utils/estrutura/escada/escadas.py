@@ -5,11 +5,14 @@ from plotly.subplots import make_subplots
 import numpy as np
 
 def calcular_armadura_flexao(md, bw, d, fck, fyk=500):
-    fcd = (fck / 10) / 1.4  # kN/cm²
-    fyd = (fyk / 10) / 1.15 # kN/cm²
+    # αc = 0.85 deve ser absorvido em fcd para que a fórmula kx = 1.25*(1-√(1-2*kmd))
+    # seja válida (derivada de kmd = 0.8*kx*(1-0.4*kx) com fcd = αc*fck/γc).
+    fcd = 0.85 * (fck / 10) / 1.4  # kN/cm²  — αc·fck/γc
+    fyd = (fyk / 10) / 1.15         # kN/cm²
     kmd = md / (bw * (d ** 2) * fcd)
-    if kmd > 0.32:
-        return None 
+    # NBR 6118:2014 limita kx ≤ 0.45 para CA-50 → kmd_max = 0.8*0.45*(1-0.18) ≈ 0.295
+    if kmd > 0.295:
+        return None
     kx = 1.25 * (1 - math.sqrt(1 - 2 * kmd))
     z = d * (1 - 0.4 * kx)
     As = md / (z * fyd)
@@ -64,9 +67,14 @@ def plot_vista_lateral(p, e, h, n_espelhos, L, H):
     # Fundo da laje
     alpha = math.atan(e/p)
     h_vert = h / math.cos(alpha)
-    
+
+    # O intrados deve ser paralelo à inclinação e/p (não H/L).
+    # H/L > e/p porque H = n_espelhos*e e L = (n_espelhos-1)*p,
+    # então usar H-h_vert na direita faz a reta cruzar os degraus superiores.
+    y_intrados_direita = (n_espelhos - 1) * e - h_vert  # = L*(e/p) - h_vert
+
     x_poly = x_steps + [L, 0, 0]
-    y_poly = y_steps + [H - h_vert, -h_vert, 0]
+    y_poly = y_steps + [y_intrados_direita, -h_vert, 0]
     
     # Concreto
     fig.add_trace(go.Scatter(x=x_poly, y=y_poly, fill='toself', fillcolor='rgba(150, 150, 150, 0.4)', mode='lines', line=dict(color='black', width=2), name='Elevação'))
@@ -169,8 +177,9 @@ def plot_vista_3d(p, e, h, n_espelhos, largura, L, H):
     for i in range(n_espelhos - 1):
         x_wire.extend([(i+1)*p, (i+1)*p])
         z_wire.extend([z_wire[-1], z_wire[-1]+e])
+    z_intrados_direita = (n_espelhos - 1) * e - h_vert  # paralelo à inclinação e/p
     x_wire.extend([L, 0, 0])
-    z_wire.extend([H - h_vert, -h_vert, 0])
+    z_wire.extend([z_intrados_direita, -h_vert, 0])
     
     traces.append(go.Scatter3d(x=x_wire, y=[0]*len(x_wire), z=z_wire, mode='lines', line=dict(color='black', width=4)))
     traces.append(go.Scatter3d(x=x_wire, y=[largura]*len(x_wire), z=z_wire, mode='lines', line=dict(color='black', width=4)))
@@ -403,10 +412,20 @@ def show():
             "Escada em Balanço (Engastada em um lado)"
         ])
         st.session_state.modelo = modelo
-        
-        vao_L = st.session_state.L_real / 100.0
-        st.info(f"O Vão Teórico calculado automaticamente é **{vao_L:.2f} m**.")
-        
+
+        # Vão estrutural depende do modelo:
+        # - Longitudinal (Bi-apoiada): laje biapoiada nos patamares → vão = L_real (horizontal)
+        # - Transversalmente: laje biapoiada nas paredes/vigas laterais → vão = largura
+        # - Balanço: laje em consolo lateral → vão = largura
+        if "Longitudinalmente" in modelo or "Bi-apoiada" in modelo:
+            vao_L = st.session_state.L_real / 100.0
+            desc_vao = f"vão longitudinal L = {vao_L:.2f} m"
+        else:
+            vao_L = st.session_state.largura / 100.0
+            desc_vao = f"vão transversal (largura) = {vao_L:.2f} m"
+
+        st.info(f"Vão estrutural para este modelo: **{desc_vao}**")
+
         if pd > 0:
             if "Bi-apoiada" in modelo or "Transversalmente" in modelo:
                 Md = (pd * (vao_L ** 2)) / 8
