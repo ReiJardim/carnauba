@@ -114,11 +114,16 @@ def plot_vista_superior(p, n_pisos, L, largura):
     return fig
 
 
-def plot_vista_3d(p, e, h, n_espelhos, largura, L, H):
+def plot_vista_3d(p, e, h, n_espelhos, largura, L, H,
+                  opacidade=1.0,
+                  cobrimento=2.5, phi_mm=10.0, phi_dist_mm=6.3,
+                  s_p=15.0, s_d=20.0):
     """
     Modelo 3D interativo com geometria estruturalmente correta:
     - Laje inclinada contínua (paralelepípedo inclinado)
     - Cada degrau = prisma triangular sentado sobre a laje (sem interseção)
+    - Armaduras principal e de distribuição visíveis com transparência
+    Todos os valores em cm.
     """
     LUZ     = dict(ambient=0.45, diffuse=0.85, specular=0.25, roughness=0.55, fresnel=0.1)
     LUZ_POS = dict(x=200, y=-300, z=500)
@@ -126,61 +131,24 @@ def plot_vista_3d(p, e, h, n_espelhos, largura, L, H):
     n       = n_espelhos
 
     # ── Índices para paralelepípedo (8 vértices) ───────────────────────────────
-    # Vértices 0-3: face "inferior"  |  4-7: face "superior" (mesmo x,y)
     BOX_I = [0, 0,  4, 4,  0, 0,  2, 2,  0, 0,  1, 1]
     BOX_J = [1, 2,  6, 7,  4, 5,  6, 7,  3, 7,  5, 6]
     BOX_K = [2, 3,  5, 6,  5, 1,  7, 3,  7, 4,  6, 2]
 
     # ── Índices para prisma triangular (6 vértices) ────────────────────────────
-    # v0=(x0,0,z0)  v1=(x0,0,z1)  v2=(x1,0,z1)   ← face frontal y=0
-    # v3=(x0,L,z0)  v4=(x0,L,z1)  v5=(x1,L,z1)   ← face traseira y=larg
-    # Faces: frontal(0,1,2) | traseira(3,5,4) | espelho(0,3,4,1) |
-    #        piso(1,4,5,2)  | base inclinada(0,2,5,3)
     PRI_I = [0, 3,  0, 0,  1, 1,  0, 0]
     PRI_J = [1, 5,  3, 4,  4, 5,  2, 5]
     PRI_K = [2, 4,  4, 1,  5, 2,  5, 3]
 
-    # ── Laje inclinada ─────────────────────────────────────────────────────────
+    # ── Geometria base ─────────────────────────────────────────────────────────
     alpha  = math.atan2(e, p)
-    h_vert = h / math.cos(alpha)          # espessura projetada verticalmente
+    h_vert = h / math.cos(alpha)
     span_x = n * p
     span_z = n * e
-    # face superior (toca os degraus): z vai de 0 a span_z linearmente com x
-    # face inferior: deslocada h_vert para baixo
-    xs_l = [0, span_x, span_x, 0,         0, span_x, span_x, 0      ]
-    ys_l = [0, 0,      largura, largura,   0, 0,      largura, largura]
-    zs_l = [0, span_z, span_z, 0,         -h_vert, span_z-h_vert, span_z-h_vert, -h_vert]
-    traces.append(go.Mesh3d(
-        x=xs_l, y=ys_l, z=zs_l,
-        i=BOX_I, j=BOX_J, k=BOX_K,
-        color='#3d4f5c', flatshading=False,
-        lighting=LUZ, lightposition=LUZ_POS,
-        showscale=False, hoverinfo='skip', name='Laje'
-    ))
+    pad    = 2 * p
 
-    # ── Degraus (prismas triangulares) ─────────────────────────────────────────
-    cores = ['#7a8d9c', '#5e7080']
-    for step in range(n):
-        x0 = step * p;       x1 = (step + 1) * p
-        z0 = step * e;       z1 = (step + 1) * e
-        # 6 vértices do prisma: v0-v2 lado y=0, v3-v5 lado y=largura
-        xs_p = [x0, x0, x1,   x0, x0, x1   ]
-        ys_p = [0,  0,  0,    largura, largura, largura]
-        zs_p = [z0, z1, z1,   z0, z1, z1   ]
-        traces.append(go.Mesh3d(
-            x=xs_p, y=ys_p, z=zs_p,
-            i=PRI_I, j=PRI_J, k=PRI_K,
-            color=cores[step % 2], flatshading=False,
-            lighting=LUZ, lightposition=LUZ_POS,
-            showscale=False, hoverinfo='skip', name=f'Degrau {step+1}'
-        ))
-
-    # ── Piso de saída (laje inferior horizontal) ───────────────────────────────
-    # Extensão à esquerda da escada — piso do pavimento inferior
-    pad = 2 * p   # comprimento do trecho de piso mostrado
-
+    # ── Helper: paralelepípedo horizontal ──────────────────────────────────────
     def slab_horizontal(x0, x1, z_top, espessura, cor, nome):
-        """Paralelepípedo horizontal com espessura dada."""
         z_bot = z_top - espessura
         xs = [x0, x1, x1, x0,   x0, x1, x1, x0]
         ys = [0,  0,  largura, largura,   0, 0, largura, largura]
@@ -188,16 +156,95 @@ def plot_vista_3d(p, e, h, n_espelhos, largura, L, H):
         return go.Mesh3d(
             x=xs, y=ys, z=zs,
             i=BOX_I, j=BOX_J, k=BOX_K,
-            color=cor, flatshading=False,
+            color=cor, opacity=opacidade, flatshading=False,
             lighting=LUZ, lightposition=LUZ_POS,
             showscale=False, hoverinfo='skip', name=nome
         )
 
-    # Piso inferior: nível z=0, mesma espessura vertical da laje inclinada
-    traces.append(slab_horizontal(-pad, 0, 0.0, h_vert, '#2e3d4a', 'Piso inferior'))
+    # ── Laje inclinada ─────────────────────────────────────────────────────────
+    xs_l = [0, span_x, span_x, 0,        0, span_x, span_x, 0      ]
+    ys_l = [0, 0,      largura, largura,  0, 0,      largura, largura]
+    zs_l = [0, span_z, span_z, 0,        -h_vert, span_z-h_vert, span_z-h_vert, -h_vert]
+    traces.append(go.Mesh3d(
+        x=xs_l, y=ys_l, z=zs_l,
+        i=BOX_I, j=BOX_J, k=BOX_K,
+        color='#3d4f5c', opacity=opacidade, flatshading=False,
+        lighting=LUZ, lightposition=LUZ_POS,
+        showscale=False, hoverinfo='skip', name='Laje'
+    ))
 
-    # Laje superior: nível z=span_z, mesma espessura vertical da laje inclinada
-    traces.append(slab_horizontal(span_x, span_x + pad, span_z, h_vert, '#2e3d4a', 'Laje superior'))
+    # ── Degraus (prismas triangulares) ─────────────────────────────────────────
+    cores = ['#7a8d9c', '#5e7080']
+    for step in range(n):
+        x0 = step * p;  x1 = (step + 1) * p
+        z0 = step * e;  z1 = (step + 1) * e
+        xs_p = [x0, x0, x1,  x0, x0, x1]
+        ys_p = [0,  0,  0,   largura, largura, largura]
+        zs_p = [z0, z1, z1,  z0, z1, z1]
+        traces.append(go.Mesh3d(
+            x=xs_p, y=ys_p, z=zs_p,
+            i=PRI_I, j=PRI_J, k=PRI_K,
+            color=cores[step % 2], opacity=opacidade, flatshading=False,
+            lighting=LUZ, lightposition=LUZ_POS,
+            showscale=False, hoverinfo='skip', name=f'Degrau {step+1}'
+        ))
+
+    # ── Piso inferior e laje superior ──────────────────────────────────────────
+    traces.append(slab_horizontal(-pad, 0,               0.0,    h_vert, '#2e3d4a', 'Piso inferior'))
+    traces.append(slab_horizontal(span_x, span_x + pad,  span_z, h_vert, '#2e3d4a', 'Laje superior'))
+
+    # ── Armaduras ──────────────────────────────────────────────────────────────
+    phi_cm      = phi_mm      / 10.0   # diâmetro principal em cm
+    phi_dist_cm = phi_dist_mm / 10.0   # diâmetro distribuição em cm
+
+    # Posição z da face inferior da laje em função de x
+    def z_bot(x):
+        return x * (e / p) - h_vert
+
+    # Camada 1 — armadura principal (barras longitudinais, mais próximas da face inf.)
+    c_p_offset = cobrimento + phi_cm / 2.0
+    # barras distribuídas ao longo de Y, espaçamento s_p
+    y0_p = cobrimento + phi_cm / 2.0
+    y_bars_p = []
+    y = y0_p
+    while y <= largura - cobrimento - phi_cm / 2.0:
+        y_bars_p.append(y)
+        y += s_p
+
+    # extensão da barra para dentro dos apoios (ancoragem visual)
+    ext = min(pad, 25.0)
+    for y_bar in y_bars_p:
+        x_start = -ext;   x_end = span_x + ext
+        z_start = z_bot(0)    + c_p_offset
+        z_end   = z_bot(span_x) + c_p_offset
+        # interpola z_start para x=-ext e z_end para x=span_x+ext
+        slope = e / p
+        z_s = -h_vert + (-ext) * slope + c_p_offset
+        z_e = -h_vert + (span_x + ext) * slope + c_p_offset
+        traces.append(go.Scatter3d(
+            x=[x_start, x_end], y=[y_bar, y_bar], z=[z_s, z_e],
+            mode='lines', line=dict(color='#FF6B6B', width=3),
+            hoverinfo='text', hovertext='Arm. principal',
+            name='Arm. principal', showlegend=False
+        ))
+
+    # Camada 2 — armadura de distribuição (barras transversais, acima das principais)
+    c_d_offset = cobrimento + phi_cm + phi_dist_cm / 2.0
+    # barras distribuídas ao longo de X (no plano inclinado), espaçamento s_d
+    x_bars_d = []
+    x = s_d / 2.0
+    while x <= span_x - s_d / 2.0:
+        x_bars_d.append(x)
+        x += s_d
+
+    for x_bar in x_bars_d:
+        z_bar = z_bot(x_bar) + c_d_offset
+        traces.append(go.Scatter3d(
+            x=[x_bar, x_bar], y=[0.0, largura], z=[z_bar, z_bar],
+            mode='lines', line=dict(color='#FFD700', width=2),
+            hoverinfo='text', hovertext='Arm. distribuição',
+            name='Arm. distribuição', showlegend=False
+        ))
 
     fig = go.Figure(data=traces)
     fig.update_layout(
@@ -1057,6 +1104,13 @@ def show():
             s_d = round(100.0 / n_d, 1)
             As_adot_d = n_d * A_phi_d
 
+            # Salva parâmetros de armadura para uso na aba de visualização 3D
+            st.session_state.arm_cobrimento  = cobrimento
+            st.session_state.arm_phi_mm      = bitola_est
+            st.session_state.arm_phi_dist_mm = bitola_dist
+            st.session_state.arm_s_p         = s_p
+            st.session_state.arm_s_d         = s_d
+
             # Limites NBR 6118:2014 §17.3.5.2
             h_ref = st.session_state.h_laje
             s_max_p = min(2.0 * h_ref, 20.0)   # principal: ≤ min(2h, 20cm)
@@ -1478,8 +1532,24 @@ $$a_{min} = \\max(\\phi_{max};\\ d_{brita}+0{,}5\\,\\text{cm};\\ 2\\,\\text{cm})
                             use_container_width=True, key="plot_lateral_geral")
 
         st.markdown("#### Modelo Tridimensional interativo")
-        st.plotly_chart(plot_vista_3d(c_p, c_e, c_h, c_n, c_larg, c_L, c_H),
-                        use_container_width=True, key="plot_3d_geral")
+        opacidade_3d = st.slider(
+            "Transparência do concreto", min_value=0.0, max_value=1.0,
+            value=1.0, step=0.05, key="slider_opacidade_3d",
+            help="Reduza para ver as armaduras internas"
+        )
+        # Lê parâmetros de armadura calculados na aba de dimensionamento (com defaults)
+        arm_cob  = st.session_state.get("arm_cobrimento",  2.5)
+        arm_phi  = st.session_state.get("arm_phi_mm",      10.0)
+        arm_phid = st.session_state.get("arm_phi_dist_mm", 6.3)
+        arm_sp   = st.session_state.get("arm_s_p",         15.0)
+        arm_sd   = st.session_state.get("arm_s_d",         20.0)
+        st.plotly_chart(
+            plot_vista_3d(c_p, c_e, c_h, c_n, c_larg, c_L, c_H,
+                          opacidade=opacidade_3d,
+                          cobrimento=arm_cob, phi_mm=arm_phi, phi_dist_mm=arm_phid,
+                          s_p=arm_sp, s_d=arm_sd),
+            use_container_width=True, key="plot_3d_geral"
+        )
 
         st.markdown("---")
         st.markdown("### Resumo de Engenharia")
