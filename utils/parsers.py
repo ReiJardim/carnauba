@@ -1,28 +1,47 @@
+"""
+Carnauba Viewer Parsers
+
+Functions for extracting metadata from PDF, DXF, and IFC files.
+"""
 import io
-import tempfile
+import logging
 import os
+import tempfile
+import zipfile
+from typing import Any
+
 import ezdxf
 import ifcopenshell
-from pypdf import PdfReader # streamlit-pdf-viewer uses pypdf internally often, but let's standardise if possible or just use what works.
-# Actually I'll use standard pypdf if available or just simple logic.
-# Wait, pypdf is not in requirements explicitly but streamlit-pdf-viewer likely depends on it or similar?
-# Let's check requirements.txt again. I only put `streamlit-pdf-viewer`.
-# I should probably add `pypdf` to requirements.txt to be safe for metadata extraction.
-# OR I can just use `streamlit-pdf-viewer`'s rendering, but for metadata (page count), pypdf is good.
-# I'll rely on pypdf being there or add it. Let's add it to imports and requirements if I fail.
-# Actually, let's just use `pypdf` for page count.
 
+from utils.temp_files import temp_file_handler
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# PDF reader with fallback
 try:
     from pypdf import PdfReader
+    PYPDF_AVAILABLE = True
 except ImportError:
-    # Fallback or error if not installed.
-    # I will assume I need to install it.
-    pass
+    logger.warning("pypdf not installed. PDF metadata extraction will be limited.")
+    PYPDF_AVAILABLE = False
+    PdfReader = None  # type: ignore
 
-def parse_pdf_metadata(file_buffer):
+
+def parse_pdf_metadata(file_buffer: io.BytesIO) -> dict[str, Any]:
     """
     Extract metadata from PDF file buffer.
+
+    Args:
+        file_buffer: BytesIO buffer containing the PDF file.
+
+    Returns:
+        dict: Metadata dictionary with type, pages, and info keys.
+              Contains 'error' key if parsing fails.
     """
+    if not PYPDF_AVAILABLE:
+        return {"error": "pypdf not installed", "type": "PDF"}
+
     try:
         reader = PdfReader(file_buffer)
         num_pages = len(reader.pages)
@@ -32,66 +51,90 @@ def parse_pdf_metadata(file_buffer):
             "info": reader.metadata
         }
     except Exception as e:
+        logger.error(f"Failed to parse PDF: {e}")
         return {"error": f"Failed to parse PDF: {str(e)}", "type": "PDF"}
 
-def parse_dxf_metadata(file_buffer):
+
+def parse_dxf_metadata(file_buffer: io.BytesIO) -> dict[str, Any]:
     """
     Extract metadata from DXF file buffer.
+
+    Args:
+        file_buffer: BytesIO buffer containing the DXF file.
+
+    Returns:
+        dict: Metadata dictionary with type, version, layers_count, and layers.
+              Contains 'error' key if parsing fails.
     """
     try:
-        # ezdxf reads from stream (text mode usually tailored for files, but let's try reading bytes)
-        # ezdxf.read() expects a filename or a stream.
-        # file_buffer is bytes. ezdxf expects text stream usually for DXF.
-        # let's decode to string.
-        content = file_buffer.getvalue().decode('utf-8', errors='ignore')
-        doc = ezdxf.read(io.StringIO(content))
-        
-        layers = [layer.dxf.name for layer in doc.layers]
-        return {
-            "type": "DXF",
-            "version": doc.dxfversion,
-            "layers_count": len(layers),
-            "layers": layers[:10]  # Show first 10
-        }
+        with temp_file_handler(file_buffer.getvalue(), ".dxf") as tmp_path:
+            doc = ezdxf.readfile(tmp_path)
+            layers = [layer.dxf.name for layer in doc.layers]
+
+            return {
+                "type": "DXF",
+                "version": doc.dxfversion,
+                "layers_count": len(layers),
+                "layers": layers[:10]  # Show first 10
+            }
     except Exception as e:
+        logger.error(f"Failed to parse DXF: {e}")
         return {"error": f"Failed to parse DXF: {str(e)}", "type": "DXF"}
 
-def parse_ifc_metadata(file_buffer):
-    """
-    Extract metadata from IFC file buffer.
-    """
-    # ifcopenshell needs a file path usually.
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".ifc") as tmp:
-            tmp.write(file_buffer.getvalue())
-            tmp_path = tmp.name
-        
-        f = ifcopenshell.open(tmp_path)
-        
-        # Schema
-        schema = f.schema
-        
-        # Counts
-        walls = len(f.by_type("IfcWall"))
-        windows = len(f.by_type("IfcWindow"))
-        slabs = len(f.by_type("IfcSlab"))
-        doors = len(f.by_type("IfcDoor"))
-        
-        project = f.by_type("IfcProject")
-        project_name = project[0].Name if project else "Unknown"
 
-        os.unlink(tmp_path)
-        
-        return {
-            "type": "IFC",
-            "schema": schema,
-            "project_name": project_name,
-            "counts": {
-                "Walls": walls,
-                "Windows": windows,
-                "Doors": doors,
-                "Slabs": slabs
+def parse_ifc_metadata(file_buffer: io.BytesIO) -> dict[str, Any]:
+    """
+    Extract metadata from IFC file buffer (supports .ifc and .ifczip).
+
+    Args:
+        file_buffer: BytesIO buffer containing the IFC or IFCZIP file.
+
+    Returns:
+        dict: Metadata dictionary with type, schema, project_name, and counts.
+              Contains 'error' key if parsing fails.
+    """
+    try:
+        tmp_path: str | None = None
+        content: bytes
+
+        # Check if it's a zip file
+        file_buffer.seek(0)
+        try:
+            with zipfile.ZipFile(file_buffer) as zf:
+                # Find first .ifc file in zip
+                ifc_files = [f for f in zf.namelist() if f.lower().endswith('.ifc')]
+                if not ifc_files:
+                    return {"error": "No .ifc file found in zip archive", "type": "IFC"}
+                content = zf.read(ifc_files[0])
+        except zipfile.BadZipFile:
+            # Not a zip, assume standard IFC
+            file_buffer.seek(0)
+            content = file_buffer.getvalue()
+
+        with temp_file_handler(content, ".ifc") as tmp_path:
+            ifc_file = ifcopenshell.open(tmp_path)
+
+            # Extract metadata
+            schema = ifc_file.schema
+            walls = len(ifc_file.by_type("IfcWall"))
+            windows = len(ifc_file.by_type("IfcWindow"))
+            slabs = len(ifc_file.by_type("IfcSlab"))
+            doors = len(ifc_file.by_type("IfcDoor"))
+
+            project = ifc_file.by_type("IfcProject")
+            project_name = project[0].Name if project else "Unknown"
+
+            return {
+                "type": "IFC",
+                "schema": schema,
+                "project_name": project_name,
+                "counts": {
+                    "Walls": walls,
+                    "Windows": windows,
+                    "Doors": doors,
+                    "Slabs": slabs
+                }
             }
-        }
     except Exception as e:
+        logger.error(f"Failed to parse IFC: {e}")
         return {"error": f"Failed to parse IFC: {str(e)}", "type": "IFC"}

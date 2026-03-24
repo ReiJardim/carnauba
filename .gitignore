@@ -78,3 +78,11 @@ assets/
 PRD_carnauba.md
 temp/
 *.log
+utils/__pycache__
+__pycache__
+lab
+utils/__pycache__
+
+.agent
+doc
+laboratorio
